@@ -136,11 +136,11 @@ def bradykinesiaFeatures(windowData,sr,windowLength=60):
 
 
 if __name__ == '__main__':
-    allSubs = ['110001','110002','110003','110004','110005','110006','110007','110008','110009','110010','110011','110013','110014','110016','110017','110018',]
-    allSubs = ['110018']
+    allSubs = ['110001','110002','110003','110004','110005','110006','110007','110008','110009','110010','110011','110013','110014','110016','110017','110018','110019','110020','110021',]
+    #allSubs = ['110018']
     outPath = 'C:/data/processed/ESM_pilot/'
     sr=100
-    winL = 30 # seconds
+    winL = 900 # seconds
     for subject in allSubs:
         print(subject)
         trialData = np.load(join(outPath, subject + '_trials.npy')).astype(np.float64)

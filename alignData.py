@@ -1,51 +1,57 @@
+from os import listdir
+from os.path import isfile, join
+from datetime import timedelta
+import time
+
+from scipy.signal import decimate
 import pandas as pd
 import matplotlib.pyplot as plt
 import pyedflib
 import numpy as np
-from datetime import timedelta
-from scipy.signal import decimate
-import time
-from os import listdir
-from os.path import isfile, join
- 
+
+
 def loadESM(path):
-    esm = df = pd.read_stata('C:/data/raw/MOX/SANPAR_BE.dta',convert_categoricals = False)
+    esm = pd.read_stata('C:/data/raw/MOX/SANPAR_BE.dta', convert_categoricals=False)
     esm = esm[['subjno', 'mood_well', 'mood_down', 'mood_fright', 'mood_tense', 'phy_sleepy', 'phy_tired',
-           'mood_cheerf', 'mood_relax', 'thou_concent', 'pat_hallu', 'loc_where',
-           'soc_who', 'soc_who02', 'soc_who03', 'act_what', 'act_what02',
-           'act_what03', 'act_norpob', 'sanpar_been', 'sanpar_stil',
-           'sanpar_spreken', 'sanpar_lopen', 'sanpar_tremor', 'sanpar_traag',
-           'sanpar_stijf', 'sanpar_spann', 'sanpar_beweeg', 'sanpar_onoff',
-           'sanpar_medic', 'beep_disturb', '_datetime', '_datetime_e', 'dayno_n', 'beepno_n']]
-    esm['duration'] = esm['_datetime_e']-esm['_datetime']
+               'mood_cheerf', 'mood_relax', 'thou_concent', 'pat_hallu', 'loc_where',
+               'soc_who', 'soc_who02', 'soc_who03', 'act_what', 'act_what02',
+               'act_what03', 'act_norpob', 'sanpar_been', 'sanpar_stil',
+               'sanpar_spreken', 'sanpar_lopen', 'sanpar_tremor', 'sanpar_traag',
+               'sanpar_stijf', 'sanpar_spann', 'sanpar_beweeg', 'sanpar_onoff',
+               'sanpar_medic', 'beep_disturb', '_datetime', '_datetime_e', 'dayno_n', 'beepno_n']]
+    esm['duration'] = esm['_datetime_e'] - esm['_datetime']
+
     # rename to english
-    esm = esm.rename(index=str,columns={'sanpar_been':'prob_mobility','sanpar_stil':'prob_stillness','sanpar_spreken':'prob_speech','sanpar_lopen':'prob_walking','sanpar_tremor':'tremor','sanpar_traag':'slowness','sanpar_stijf':'stiffness','sanpar_spann':'tension','sanpar_beweeg':'dyskinesia','sanpar_onoff':'onoff','sanpar_medic':'medic'})
+    esm = esm.rename(index=str,
+                     columns={'sanpar_been': 'prob_mobility',
+                              'sanpar_stil': 'prob_stillness',
+                              'sanpar_spreken': 'prob_speech',
+                              'sanpar_lopen': 'prob_walking',
+                              'sanpar_tremor': 'tremor',
+                              'sanpar_traag': 'slowness',
+                              'sanpar_stijf': 'stiffness',
+                              'sanpar_spann': 'tension',
+                              'sanpar_beweeg': 'dyskinesia',
+                              'sanpar_onoff': 'onoff',
+                              'sanpar_medic': 'medic'})
 
-
-
-    mapNames={}
+    mapNames = {}
     for i in range(25):
-        mapNames[9009989+i]=110001+i
+        mapNames[9009989 + i] = 110001 + i
 
     esm['castorID'] = [mapNames[e] for e in esm['subjno']]
     return esm
 
 
-# In[39]:
-
-
-# create list of files per L/R/chest from directory (mypath)
 def getFileLists(localPath, subject):
+    # create list of files per L/R/chest from directory (mypath)
     localPath = join(localPath, subject)
-    leftSensors = ['13797','13799','13794','13806']
-    rightSensors = ['13805','13801','13793', '13795']
-    chestSensors = ['13804','13792','13803', '13796']
+    leftSensors = ['13797', '13799', '13794', '13806']
+    rightSensors = ['13805', '13801', '13793', '13795']
+    chestSensors = ['13804', '13792', '13803', '13796']
 
-    
-
-
-    bdffiles = [f for f in listdir(localPath) if isfile(join(localPath,f)) and f[0]!='_' and f[-3:] =='edf']
-    #bdffiles are the files in mypath, not directories
+    bdffiles = [f for f in listdir(localPath) if isfile(join(localPath, f)) and f[0] != '_' and f[-3:] == 'edf']
+    # bdffiles are the files in mypath, not directories
 
     leftFiles = []
     rightFiles = []
@@ -53,15 +59,15 @@ def getFileLists(localPath, subject):
 
     for f in bdffiles:
         if f[0:5] in leftSensors:
-            leftFiles.append(join(localPath,f))
+            leftFiles.append(join(localPath, f))
         elif f[0:5] in rightSensors:
-            rightFiles.append(join(localPath,f))
+            rightFiles.append(join(localPath, f))
         elif f[0:5] in chestSensors:
-            chestFiles.append(join(localPath,f))
+            chestFiles.append(join(localPath, f))
 
-    leftFiles=sorted(leftFiles)
-    rightFiles=sorted(rightFiles)
-    chestFiles=sorted(chestFiles)
+    leftFiles = sorted(leftFiles)
+    rightFiles = sorted(rightFiles)
+    chestFiles = sorted(chestFiles)
     return leftFiles, rightFiles, chestFiles
 
 

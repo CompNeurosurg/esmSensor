@@ -5,13 +5,24 @@ import time
 
 from scipy.signal import decimate
 import pandas as pd
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import pyedflib
 import numpy as np
 
 
-def loadESM(path):
-    esm = pd.read_stata('C:/data/raw/MOX/SANPAR_BE.dta', convert_categoricals=False)
+def load_ESM(path, filename):
+    '''
+    Loads .dta file, (re)names the columns and returns
+    the dataframe (N x Features)
+
+    in:
+        path: path containing ESM data
+        filename
+
+    out:
+        pd.DataFrame [N_subjects x Features]
+    '''
+    esm = pd.read_stata(path + filename, convert_categoricals=False)
     esm = esm[['subjno', 'mood_well', 'mood_down', 'mood_fright', 'mood_tense', 'phy_sleepy', 'phy_tired',
                'mood_cheerf', 'mood_relax', 'thou_concent', 'pat_hallu', 'loc_where',
                'soc_who', 'soc_who02', 'soc_who03', 'act_what', 'act_what02',
@@ -35,189 +46,239 @@ def loadESM(path):
                               'sanpar_onoff': 'onoff',
                               'sanpar_medic': 'medic'})
 
-    mapNames = {}
+    # Add correct subject_id labels
+    map_names = {}
     for i in range(25):
-        mapNames[9009989 + i] = 110001 + i
+        map_names[9009989 + i] = 110001 + i
 
-    esm['castorID'] = [mapNames[e] for e in esm['subjno']]
+    esm['castorID'] = [map_names[e] for e in esm['subjno']]
+
     return esm
 
 
-def getFileLists(localPath, subject):
-    # create list of files per L/R/chest from directory (mypath)
-    localPath = join(localPath, subject)
-    leftSensors = ['13797', '13799', '13794', '13806']
-    rightSensors = ['13805', '13801', '13793', '13795']
-    chestSensors = ['13804', '13792', '13803', '13796']
+def get_file_lists(local_path, subject):
+    '''
+    Creates a list of files for each sensor (Left/right/chest) located
+    in local_path.
 
-    bdffiles = [f for f in listdir(localPath) if isfile(join(localPath, f)) and f[0] != '_' and f[-3:] == 'edf']
+    in:
+        local_path: Path containing sensor files
+        subject: subject to retrieves files from
+
+    out:
+        (left/right/chest)_files: lists of filepaths per sensor location
+
+    '''
+    local_path = join(local_path, subject)
+
+    # sensor names
+    left_sensors = ['13797', '13799', '13794', '13806']
+    right_sensors = ['13805', '13801', '13793', '13795']
+    chest_sensors = ['13804', '13792', '13803', '13796']
+
+    bdf_files = [f for f in listdir(local_path) if (isfile(join(local_path, f))) and (f[0] != '_' and f[-3:] == 'edf')]
     # bdffiles are the files in mypath, not directories
 
-    leftFiles = []
-    rightFiles = []
-    chestFiles = []
+    left_files = []
+    right_files = []
+    chest_files = []
 
-    for f in bdffiles:
-        if f[0:5] in leftSensors:
-            leftFiles.append(join(localPath, f))
-        elif f[0:5] in rightSensors:
-            rightFiles.append(join(localPath, f))
-        elif f[0:5] in chestSensors:
-            chestFiles.append(join(localPath, f))
+    for f in bdf_files:
+        if f[0:5] in left_sensors:
+            left_files.append(join(local_path, f))
+        elif f[0:5] in right_sensors:
+            right_files.append(join(local_path, f))
+        elif f[0:5] in chest_sensors:
+            chest_files.append(join(local_path, f))
 
-    leftFiles = sorted(leftFiles)
-    rightFiles = sorted(rightFiles)
-    chestFiles = sorted(chestFiles)
-    return leftFiles, rightFiles, chestFiles
+    left_files = sorted(left_files)
+    right_files = sorted(right_files)
+    chest_files = sorted(chest_files)
 
-
-# In[34]:
+    return left_files, right_files, chest_files
 
 
-def extractRawTrials(leftFiles,rightFiles,chestFiles,esmFrame,esmWindowLength=15,featureWindowLength=60):
+def extract_raw_trials(left_files, right_files, chest_files, esm_frame,
+                       esm_window_length=15, feature_window_length=60):
+    '''
+    Reads the sensor files and aligns the data with the esm data. Then
+    data quality is checked.
+
+    Returns cleaned and synced trial data and ESM beeps
+    '''
     # Read in the three list of files
-    #Process leftWristData
-    leftWristDF=[]
-    rightWristDF=[]
-    chestDF=[]
-    
-    files = [leftFiles, rightFiles, chestFiles]
-    trials = [[[] for _ in range(esmFrame.shape[0])],[[] for _ in range(esmFrame.shape[0])], [[] for _ in range(esmFrame.shape[0])]]
-    identifiers = ['l', 'r', 'c']
-    foundTrials = np.zeros((esmFrame.shape[0],3))
+    # Process leftWristData
+    # left_wrist_df = []
+    # right_wrist_df = []
+    # chest_df = []
+    # # trials = [[[] for _ in range(esm_frame.shape[0])], [[] for _ in range(esm_frame.shape[0])], [[] for _ in range(esm_frame.shape[0])]]
+
+    # identifiers = ['l', 'r', 'c']
+
+    files = [left_files, right_files, chest_files]
+
+    n_beeps = esm_frame.shape[0]
+    n_sensors = len(files)
+    trials = [[[]] * n_beeps] * n_sensors
+
+    found_trials = np.zeros((n_beeps, n_sensors))
     for i, f in enumerate(files):
         for file in f:
             print(file)
+
+            # Read the data from the filepath, raise error if file is not in the
+            # correct format.
             try:
-                labels, timeStamps, data, sr = readData(file) ## as input instead: leftFiles
-                if data.shape[1]<sr * featureWindowLength:
+                labels, timestamps, data, fs = read_edf_data(file)  # as input instead: leftFiles
+                if data.shape[1] < fs * feature_window_length:
                     raise ValueError('File too short to proceed.')
-            except:
+            except Exception:
                 print('%s is broken' % file)
                 continue
-            data = pd.DataFrame(data.T,index=timeStamps)
-            for beep in range(esmFrame.shape[0]):
-                if foundTrials[beep,i]==1:
-                    continue
-                beepTime=esmFrame['_datetime'].iloc[beep] # Get the corresponding time
-                timediff = np.min(np.abs(data.index-beepTime)) 
-                # Find corresponding moment for beep time in the sensor data
-                #print(timediff)
-                if timediff>timedelta(minutes=esmWindowLength):
-                # If corresponding time is too far off, remove beep
-                #print("Couldn't find corresponding sensor data")
-                    continue
-                pos=np.argmin(np.abs(data.index-beepTime))
-                # For the smallest time difference find the position in the sensor data
-                if pos>esmWindowLength*windowLength*sr:
-                    trials[i][beep] = data.iloc[pos-(int(esmWindowLength*windowLength*sr)):pos]
-                    foundTrials[beep,i]=1
 
-    keep = np.sum(foundTrials,axis=1)==3
-    trialData = np.zeros((np.sum(keep),int(esmWindowLength*windowLength*sr), 3 * 6))
-    counter =0
-    for beep in range(esmFrame.shape[0]):
+            data = pd.DataFrame(data.T, index=timestamps)
+            for beep in range(n_beeps):
+                if found_trials[beep, i] == 1:
+                    continue
+
+                # Get the corresponding time
+                beep_time = esm_frame['_datetime'].iloc[beep]
+                timediff = np.min(np.abs(data.index - beep_time))
+
+                # Find corresponding moment for beep time in the sensor data by
+                # calculating the difference in sensor and beep timestamps and
+                # select the index with the smallest difference.
+                if timediff > timedelta(minutes=esm_window_length):
+                    # If the time difference is larger than the window length,
+                    # remove beep
+                    continue
+                pos = np.argmin(np.abs(data.index - beep_time))
+
+                # For the smallest time difference, find the position in the sensor data
+                if pos > esm_window_length * WINDOW_LENGTH * fs:
+                    trials[i][beep] = data.iloc[pos - (int(esm_window_length * WINDOW_LENGTH * fs)):pos]
+                    found_trials[beep, i] = 1
+
+    keep = np.sum(found_trials, axis=1) == n_sensors  # Keep trials if all three sensors contain values
+    trialData = np.zeros((np.sum(keep), int(esm_window_length * WINDOW_LENGTH * fs), 3 * 6))  # What are 3 and 6? n_sensors and ...?
+    counter = 0
+    for beep in range(n_beeps):
         if keep[beep]:
-            temp = np.concatenate((trials[0][beep],trials[1][beep],trials[2][beep]),axis=1)
-            trialData[counter,:,:]=temp
-            counter+=1
-    foundESM = esmFrame.iloc[keep,:]   
-    return trialData,  foundESM
+            temp = np.concatenate((trials[0][beep], trials[1][beep], trials[2][beep]), axis=1)
+            trialData[counter, :, :] = temp
+            counter += 1
+    foundESM = esm_frame.iloc[keep, :]
+
+    return trialData, foundESM
 
 
-# In[31]:
+def read_edf_data(filename):
+    '''
+    Reads and .edf file and returns labels, timestamps, signal buffers and samplefrequency
+    '''
 
-
-def readData(filename): 
-    #Extract data
+    # Extract data
     f = pyedflib.EdfReader(filename)
-    sr = f.getSampleFrequencies()[0]
+    fs = f.getSampleFrequencies()[0]
     n = f.signals_in_file
     signal_labels = f.getSignalLabels()
-    sigbufs = np.zeros((n, f.getNSamples()[0]))
+    sig_bufs = np.zeros((n, f.getNSamples()[0]))
+
     for i in np.arange(n):
-        sigbufs[i, :] = f.readSignal(i)    
-    #Get starting time
-    #startingTime=f.getStartdatetime() #needs to be tested
-    startingTime=filename[-19:-4]
-    startingTime=pd.to_datetime(startingTime, format='%Y%m%d_%H%M%S', errors='ignore')
-    #print(startingTime)
-    sigbufs = decimate(sigbufs,downsampling,axis=1)
-    sr=sr/downsampling
-    timeStamps=pd.date_range(start=startingTime,periods=sigbufs.shape[1],freq='%d ms' % (1000/sr))
-    return signal_labels, timeStamps, sigbufs, sr
+        sig_bufs[i, :] = f.readSignal(i)
+
+    # Get starting time
+    # startingTime=f.getStartdatetime() #needs to be tested
+    starting_time = filename[-19:-4]
+    starting_time = pd.to_datetime(starting_time, format='%Y%m%d_%H%M%S', errors='ignore')
+
+    sig_bufs = decimate(sig_bufs, DOWNSAMPLING, axis=1)
+    fs = fs / DOWNSAMPLING
+    freq = '%d ms' % (1000 / fs)
+    timestamps = pd.date_range(start=starting_time, periods=sig_bufs.shape[1], freq=freq)
+
+    return signal_labels, timestamps, sig_bufs, fs
 
 
-# In[32]:
+def align_features_esm(list_of_dfs, esm_frame, esm_columns, esm_window_length=15):
+    '''
+    not used
 
+    '''
 
-def alignFeaturesESM(listOfDF,esmFrame,esmColumns,esmWindowLength=15):
-    
-    combinedColumns=esmColumns
-    for featureFrame in listOfDF:
-        combinedColumns= combinedColumns + featureFrame.keys().tolist()  
-    esmFeatures=pd.DataFrame(columns=combinedColumns) # Create new empty dataframe with feature and esm columns
+    combined_columns = esm_columns
+    for feature_frame in list_of_dfs:
+        combined_columns = combined_columns + feature_frame.keys().tolist()
+    esm_features = pd.DataFrame(columns=combined_columns)  # Create new empty dataframe with feature and esm columns
 
-    hop=np.mean(np.diff(listOfDF[0].index))
-    for beep in range(esmFrame.shape[0]): #Loop through all the ESM Beeps
-        beepTime=esmFrame['_datetime'].iloc[beep] # Get the corresponding time
-        
-        esmData=np.matlib.repmat(esmFrame.iloc[beep][esmColumns],esmWindowLength,1)
-        combined=esmData
-        
-        subIndex=[beepTime-hop*t for t in range(esmWindowLength)][::-1]
-        for featureFrame in listOfDF:
-        
-        
-            timediff = np.min(np.abs(featureFrame.index-beepTime)) 
+    hop = np.mean(np.diff(list_of_dfs[0].index))
+    for beep in range(esm_frame.shape[0]):  # Loop through all the ESM Beeps
+        beep_time = esm_frame['_datetime'].iloc[beep]  # Get the corresponding time
+
+        esm_data = np.matlib.repmat(esm_frame.iloc[beep][esm_columns], esm_window_length, 1)
+        combined = esm_data
+
+        sub_index = [beep_time - hop * t for t in range(esm_window_length)][::-1]
+
+        for feature_frame in list_of_dfs:
+
+            time_diff = np.min(np.abs(feature_frame.index - beep_time))
             # Find corresponding moment for beep time in the sensor data
-            #print(timediff)
-            if timediff>timedelta(minutes=esmWindowLength):
+            # print(timediff)
+            if time_diff > timedelta(minutes=esm_window_length):
                 # If corresponding time is too far off, remove beep
-                #print("Couldn't find corresponding sensor data")
+                # print("Couldn't find corresponding sensor data")
                 continue
-            pos=np.argmin(np.abs(featureFrame.index-beepTime))
+            pos = np.argmin(np.abs(feature_frame.index - beep_time))
             # For the smallest time difference find the position in the sensor data
-            if pos>esmWindowLength:
-                featColumns=featureFrame.keys().tolist() #The names of the features                
-                featData=featureFrame.iloc[pos-esmWindowLength:pos][featColumns].values
+            if pos > esm_window_length:
+                feat_columns = feature_frame.keys().tolist()  # The names of the features
+                feat_data = feature_frame.iloc[pos - esm_window_length:pos][feat_columns].values
                 # Get corresponding timestamps
-                
                 # Repeat ESM data for each data point in the window
-                combined=np.concatenate((combined,featData),axis=1)
-                #Combine ESM & feature data
-        if combined.shape[1]==len(combinedColumns):
-            esmFeatures=esmFeatures.append(pd.DataFrame(combined,columns=combinedColumns,index=subIndex))
-                #Append combined data to the dataframe
-    return esmFeatures
+                combined = np.concatenate((combined, feat_data), axis=1)
+                # Combine ESM & feature data
+        if combined.shape[1] == len(combined_columns):
+            esm_features = esm_features.append(pd.DataFrame(combined, columns=combined_columns, index=sub_index))
+            # Append combined data to the dataframe
+    return esm_features
 
 
 if __name__ == '__main__':
+    # constants
+    WINDOW_LENGTH = 60
+    DOWNSAMPLING = 2
+    FEATURE_WINDOW_LENGTH = 60
+    ESM_WINDOW_LENGTH = 15
 
-    path = "Y:/ADBS"
-    downsampling=2
-    localPath = 'C:/data/raw/MOX/'
-    outPath = 'C:/data/processed/ESM_pilot/'
-    featureWindowLength=60
-    windowLength=60
-    esmWindowLength=15
+    # path = "Y:/ADBS"
+    # out_path = 'C:/data/processed/ESM_pilot/'
+    # local_path = 'C:/data/raw/MOX/'
+    path = './data/'
+    out_path = './output'
+    local_path = './data/MOX'
 
-    esm = loadESM(path)
-    #
-    allSubs = ['110001','110002','110003','110004','110005','110006','110007','110008','110009','110010','110011','110013','110014','110015','110016','110017','110018','110019','110020','110021']
-    #allSubs = ['110015','110017','110018','110019','110020','110021']
-    #allSubs = ['110020'] #'110020',
-    for subject in allSubs:
-        leftFiles, rightFiles, chestFiles = getFileLists(localPath, subject)
-        t=time.time()
-        trialData,selectedESM = extractRawTrials(leftFiles,rightFiles,chestFiles,esm[esm['castorID']==int(subject)])
-        print(time.time()-t)
-        print(trialData.shape)
-        print(selectedESM.shape)
-        np.save(join(outPath,subject + '_trials.npy'),trialData.astype(np.float32))
-        #np.save(join(outPath,subject + '_trials64.npy'),trialData)
-        selectedESM.to_csv(join(outPath, subject + '_esm.csv'),index=False)
+    esm_path = 'PRDB_20190227T102701/'
+    esm_filename = 'SANPAR_BE.dta'
 
+    # all_subjs = ['110001','110002','110003','110004','110005','110006','110007','110008','110009','110010',
+    #            '110011','110013','110014','110015','110016','110017','110018','110019','110020','110021']
+    # all_subjs = ['110015','110017','110018','110019','110020','110021']
+    # all_subjs = ['110020'] #'110020',
+    all_subjs = ['110004']
+
+    esm = load_ESM(path + esm_path, esm_filename)
+
+    for subject in all_subjs:
+        leftFiles, rightFiles, chestFiles = get_file_lists(local_path, subject)
+        t = time.time()
+        trial_data, selected_esm = extract_raw_trials(leftFiles, rightFiles, chestFiles, esm[esm['castorID'] == int(subject)])
+        print(time.time() - t)
+        print(trial_data.shape)
+        print(selected_esm.shape)
+        np.save(join(out_path, subject + '_trials.npy'), trial_data.astype(np.float32))
+        # np.save(join(outPath,subject + '_trials64.npy'),trialData)
+        selected_esm.to_csv(join(out_path, subject + '_esm.csv'), index=False)
 
 
 '''
